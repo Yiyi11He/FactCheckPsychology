@@ -1,0 +1,9 @@
+huggingface_hub==0.22.2
+gradio
+transformers
+PyMuPDF
+scikit-learn
+langchain
+langchain-community 
+torch
+accelerate
