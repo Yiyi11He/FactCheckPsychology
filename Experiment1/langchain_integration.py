@@ -5,6 +5,11 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 import json
 from transformers import AutoTokenizer, AutoModelForCausalLM
 import torch
+from huggingface_hub import login
+from transformers import AutoTokenizer, AutoModelForCausalLM
+
+# Authenticate to Hugging Face
+login(token="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")
 
 # # LLaMA 7B model
 # model_name = "meta-llama/Llama-2-7b-hf"  
