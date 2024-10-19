@@ -3,15 +3,18 @@ from fact_checker import fact_checker
 from huggingface_hub import login
 from huggingface_hub import InferenceClient
 
+
 import os
 
 # Fetch the Hugging Face token from the environment variable
-huggingface_token = os.getenv("HuggingFaceToken")
+# huggingface_token = os.getenv("HuggingFaceToken")
 
 # Authenticate with the Hugging Face token
-login(token=huggingface_token)
+# login(token=huggingface_token)
+
+gr.load("models/meta-llama/Meta-Llama-3-8B-Instruct").launch()
 # Initialize the Hugging Face inference client for the chatbot
-client = InferenceClient("meta-llama/Meta-Llama-3-8B-Instruct")
+# client = InferenceClient("meta-llama/Meta-Llama-3-8B-Instruct")
 
 # Custom system message where the chatbot introduces itself and explains its role
 system_intro_message = (
