@@ -8,8 +8,7 @@ import torch
 from huggingface_hub import login
 from transformers import AutoTokenizer, AutoModelForCausalLM
 
-# Authenticate to Hugging Face
-login(token="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")
+#authentication to huggingface - stored inside laptop desktop passwordmanager.doc
 
 # # LLaMA 7B model
 # model_name = "meta-llama/Llama-2-7b-hf"  
