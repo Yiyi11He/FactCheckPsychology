@@ -9,7 +9,7 @@ def pdf_to_json(pdf_file):
     for page in doc:
         content.append(page.get_text())
         
-    # Close the document after processing
+    # Close the document
     doc.close()
     
     # Structure the extracted content into a dictionary and return it
