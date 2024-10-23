@@ -7,3 +7,4 @@ langchain
 langchain-community 
 torch
 accelerate
+fuzzywuzzy
