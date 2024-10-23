@@ -11,7 +11,7 @@ qa_model = pipeline("question-answering", model="distilbert-base-uncased-distill
 tokenizer = AutoTokenizer.from_pretrained("distilbert-base-uncased")
 embedding_model = AutoModel.from_pretrained("distilbert-base-uncased")
 
-# Function to extract text from PDF using PyMuPDF and keep track of pages
+# Modify the text extraction to split into sentences
 def extract_text_with_references(pdf_path):
     doc = pymupdf.open(pdf_path)
     text_content = []
@@ -19,32 +19,33 @@ def extract_text_with_references(pdf_path):
     # Iterate through pages to extract text
     for page_num, page in enumerate(doc, start=1):
         page_text = page.get_text("text")
-        lines = page_text.split("\n")  # Split the page text into lines
+        # Split by sentences using a period
+        sentences = page_text.split(".")
         
-        for line in lines:
-            clean_line = line.strip()
-            if len(clean_line) > 2 and not clean_line.replace(".", "").isdigit():
+        for sentence in sentences:
+            clean_sentence = sentence.strip()
+            if len(clean_sentence) > 5:  # Only keep meaningful sentences
                 text_content.append({
                     "page": page_num,
-                    "text": clean_line
+                    "text": clean_sentence
                 })
     
     doc.close()
     return text_content
 
-
-def find_references(fact, pdf_text_content, threshold=80):
+# Reference finder with fuzzy matching on sentences
+def find_references(fact, pdf_text_content, threshold=85):  # Increased threshold
     references = []
     
     for content in pdf_text_content:
-        # Fuzzy match the fact with each line from the PDF
-        similarity_score = fuzz.ratio(fact.lower(), content["text"].lower())
+        # Fuzzy match the fact with each sentence from the PDF
+        similarity_score = fuzz.token_set_ratio(fact.lower(), content["text"].lower())
         
-        # If the similarity score is above a threshold, consider it a match
+        # If the similarity score is above the threshold, consider it a match
         if similarity_score >= threshold:
+            # Limit the reference to a specific sentence or small portion of text
             references.append(f"Page {content['page']}: \"{content['text']}\"")
     
-    # If no references were found, provide a more meaningful message
     return references if references else ["No close matches found for the fact."]
 
 
