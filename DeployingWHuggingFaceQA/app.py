@@ -4,14 +4,17 @@ from transformers import pipeline, AutoTokenizer, AutoModel
 from collections import Counter
 from sklearn.metrics.pairwise import cosine_similarity
 import torch
-from fuzzywuzzy import fuzz
+import fuzzywuzzy as fuzz
+import numpy as np
 
-# Load the distilbert QA model and tokenizer
+# import sentence_transformers as STrans
+
+# Load distilbert QA model and tokenizer
 qa_model = pipeline("question-answering", model="distilbert-base-uncased-distilled-squad")
 tokenizer = AutoTokenizer.from_pretrained("distilbert-base-uncased")
 embedding_model = AutoModel.from_pretrained("distilbert-base-uncased")
 
-# Modify the text extraction to split into sentences
+# Text extraction to split into sentences
 def extract_text_with_references(pdf_path):
     doc = pymupdf.open(pdf_path)
     text_content = []
@@ -34,7 +37,7 @@ def extract_text_with_references(pdf_path):
     return text_content
 
 # Reference finder with fuzzy matching on sentences
-def find_references(fact, pdf_text_content, threshold=85):  # Increased threshold
+def find_references(fact, pdf_text_content, threshold=85):
     references = []
     
     for content in pdf_text_content:
@@ -150,28 +153,29 @@ example_fact_2 = "Young children experience and perceive trauma exposure same as
 example_pdf_path_2 = "The impact and long-term effects of childhood trauma.pdf" 
 
 
-
 # Gradio interface
-with gr.Blocks() as demo:
-    gr.Markdown("# Psychology Fact Checker")
-    # Add description
+with gr.Blocks(css=".submit-button {background-color: orange; color: white; font-weight: bold;}") as demo:
+    gr.Markdown("# Psychology Fact-Checking Helper Bot 🤗")
     gr.Markdown(
         """
-     
-        Hello, I am an AI Fact Checker designed to verify your claims and assist with your studies. I will evaluate the claims against the PDF files you provide and help you determine their accuracy.
-
+        Hello, I am a Fact Checker Bot 😊 designed to verify your claims and assist with your studies. 
+        I will evaluate the claims against the PDF files you provide and help you determine their accuracy.
         """
     )
 
     with gr.Row(): 
         # Section 1: Claim and Reference
         with gr.Column():
-            gr.Markdown("## 1. Claim and Reference")
+            gr.Markdown("## 1. Claims and References")
             fact_input = gr.Textbox(label="Enter the fact to be checked", lines=3)
             pdf_input = gr.Files(label="Upload additional PDF documents")
-            submit_button = gr.Button("Submit")
+
+            # Submit and Clear buttons
+            with gr.Row():
+                clear_button = gr.Button("Clear")
+                submit_button = gr.Button("Submit", elem_classes="submit-button")
             
-            # Examples directly under submit button
+            # Examples under submit button
             gr.Examples(
                 examples=[
                     [example_fact_1, [example_pdf_path_1]],  
@@ -182,7 +186,7 @@ with gr.Blocks() as demo:
                 
             # Section 2: Results and Outcome
         with gr.Column():
-            gr.Markdown("## 2. Results and Outcome")
+            gr.Markdown("## 2. Results and Outcomes")
             verdict_output = gr.Textbox(label="Verdict", placeholder="Waiting for results...")
             exact_match_output = gr.Textbox(label="Exact Match Score", placeholder="Waiting for results...")
             f1_output = gr.Textbox(label="F1 Score", placeholder="Waiting for results...")
@@ -190,19 +194,23 @@ with gr.Blocks() as demo:
             cosine_similarity_output = gr.Textbox(label="Cosine Similarity Score", placeholder="Waiting for results...")
             references_output = gr.Textbox(label="References", lines=6, placeholder="Waiting for results...")
 
-    # Fact-checking function integration with submit button
+    # Fact-checking function submit button
     submit_button.click(
         fn=fact_checker, 
         inputs=[fact_input, pdf_input],
         outputs=[verdict_output, exact_match_output, f1_output, qa_confidence_output, cosine_similarity_output, references_output]
     )
 
-
+    # Clear button
+    clear_button.click(
+        fn=lambda: ("", None, "", "", "", "", ""),
+        inputs=[],
+        outputs=[fact_input, pdf_input, verdict_output, exact_match_output, f1_output, qa_confidence_output, cosine_similarity_output, references_output]
+    )
 
     gr.Markdown(
         """
         ## Detailed Descriptions
-
         This application allows you to verify the accuracy of a fact by comparing it with 
         uploaded PDF documents. Enter a fact and optionally upload one or more PDF files to 
         check for matches. The application will output the verdict (True or False), and 
@@ -219,19 +227,17 @@ with gr.Blocks() as demo:
         **Cosine Similarity**: measures the semantic similarity between two sets of text. 
         This is also used to determine the verdict of the claim.
 
+        
         This model currently uses [distilbert/distilbert-base-uncased-distilled-squad](https://huggingface.co/distilbert/distilbert-base-uncased-distilled-squad) 
         which is a Transformer model trained by distilling BERT base that is especially good at question answering.
-
         Created by Yiyi He, supervised by A.Prof. Sonny Pham. This project is solely 
         dedicated for Dr. Welber Marinovic and Master of Computing, Artificial Intelligence, Computer Science Project (COMP6016).
-
         """
     )
 
-
 demo.launch()
 
-# # Gradio interface with examples
+# # Initial Gradio interface
 # fact_checker_interface = gr.Interface(
 #     fn=fact_checker,
 #     inputs=[
