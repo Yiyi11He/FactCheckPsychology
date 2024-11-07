@@ -1,0 +1,8 @@
+huggingface_hub
+gradio
+transformers
+PyMuPDF
+sentence-transformers
+torch
+accelerate
+rapidfuzz
