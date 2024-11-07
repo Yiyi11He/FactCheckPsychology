@@ -1,73 +1,62 @@
-#multiple sentence input
-#sentence tranformers
-#Multiple pdf support
 import gradio as gr
 import pymupdf
-from transformers import pipeline
+from transformers import pipeline, AutoTokenizer, AutoModel
 from collections import Counter
+from sklearn.metrics.pairwise import cosine_similarity
 import torch
-from rapidfuzz import fuzz
-from sentence_transformers import SentenceTransformer, util
+import fuzzywuzzy as fuzz
 import numpy as np
 
-# Load sentence transformer model
-embedding_model = SentenceTransformer('paraphrase-MiniLM-L6-v2')
+# import sentence_transformers as STrans
 
-# Extract embeddings with Sentence Transformers
-def get_embeddings(text, embedding_model):
-    return embedding_model.encode(text, convert_to_tensor=True)
+# Load distilbert QA model and tokenizer
+qa_model = pipeline("question-answering", model="distilbert-base-uncased-distilled-squad")
+tokenizer = AutoTokenizer.from_pretrained("distilbert-base-uncased")
+embedding_model = AutoModel.from_pretrained("distilbert-base-uncased")
 
-# Text extraction with references
+# Text extraction to split into sentences
 def extract_text_with_references(pdf_path):
     doc = pymupdf.open(pdf_path)
     text_content = []
     
+    # Iterate through pages to extract text
     for page_num, page in enumerate(doc, start=1):
         page_text = page.get_text("text")
-        sentences = page_text.replace('\n', ' ').split('. ')
+        # Split by sentences using a period
+        sentences = page_text.split(".")
         
         for sentence in sentences:
             clean_sentence = sentence.strip()
-            if len(clean_sentence) > 5:
-                text_content.append({"page": page_num, "text": clean_sentence})
+            if len(clean_sentence) > 5:  # Only keep meaningful sentences
+                text_content.append({
+                    "page": page_num,
+                    "text": clean_sentence
+                })
     
     doc.close()
     return text_content
 
-# Find references with fuzzy and token matching
-def find_references(fact, pdf_text_content, fuzzy_threshold=85, semantic_threshold=0.75):
+# Reference finder with fuzzy matching on sentences
+def find_references(fact, pdf_text_content, threshold=85):
     references = []
-    fact_embedding = embedding_model.encode(fact, convert_to_tensor=True)
-
+    
     for content in pdf_text_content:
-        # Fuzzy match using `fuzz.partial_ratio` and `fuzz.token_set_ratio`
-        partial_fuzzy_score = fuzz.partial_ratio(fact.lower(), content["text"].lower())
-        token_set_score = fuzz.token_set_ratio(fact.lower(), content["text"].lower())
+        # Fuzzy match the fact with each sentence from the PDF
+        similarity_score = fuzz.token_set_ratio(fact.lower(), content["text"].lower())
         
-        # Semantic similarity with sentence transformers
-        content_embedding = embedding_model.encode(content["text"], convert_to_tensor=True)
-        semantic_score = util.cos_sim(fact_embedding, content_embedding).item()
-
-        # If any of the scores meet the threshold, consider it a match
-        if partial_fuzzy_score >= fuzzy_threshold or token_set_score >= fuzzy_threshold or semantic_score >= semantic_threshold:
-            references.append(
-                f"Page {content['page']}: \"{content['text']}\" "
-                f"(Partial Fuzzy Score: {partial_fuzzy_score}, Token Set Score: {token_set_score}, Semantic Score: {semantic_score:.2f})"
-            )
+        # If the similarity score is above the threshold, consider it a match
+        if similarity_score >= threshold:
+            # Limit the reference to a specific sentence or small portion of text
+            references.append(f"Page {content['page']}: \"{content['text']}\"")
     
     return references if references else ["No close matches found for the fact."]
 
-# Define the cosine similarity calculation
-def cosine_similarity_score(fact_embeddings, prediction_embeddings):
-    return util.cos_sim(fact_embeddings, prediction_embeddings).item()
 
-# Load QA model
-qa_model = pipeline("question-answering", model="distilbert-base-uncased-distilled-squad")
-
-# Compute exact match, F1 score, and other metrics
+# exact match
 def exact_match(prediction, fact):
     return 1 if prediction.strip().lower() == fact.strip().lower() else 0
 
+# f1 score
 def f1_score(prediction, fact):
     pred_tokens = prediction.strip().lower().split()
     fact_tokens = fact.strip().lower().split()
@@ -81,13 +70,25 @@ def f1_score(prediction, fact):
     precision = num_common / len(pred_tokens)
     recall = num_common / len(fact_tokens)
     
-    return 2 * (precision * recall) / (precision + recall)
+    f1 = 2 * (precision * recall) / (precision + recall)
+    return f1
+
+# cosine similarity
+def cosine_similarity_score(fact_embeddings, prediction_embeddings):
+    return cosine_similarity(fact_embeddings, prediction_embeddings)[0][0]
+
+# Function to extract embeddings using DistilBERT
+def get_embeddings(text, embedding_model, tokenizer):
+    inputs = tokenizer(text, return_tensors="pt", truncation=True, padding=True)
+    with torch.no_grad():
+        outputs = embedding_model(**inputs)
+    return outputs.last_hidden_state.mean(dim=1).numpy()  # Return mean of hidden states as embeddings
 
 # Compute all four scores
 def compute_all_scores(prediction, fact, fact_embeddings, prediction_embeddings, result):
     em_score = exact_match(prediction, fact)
     f1 = f1_score(prediction, fact)
-    qa_confidence = result['score']
+    qa_confidence = result['score']  # QA Confidence Score from the result
     cosine_sim = cosine_similarity_score(fact_embeddings, prediction_embeddings)
     
     return {
@@ -97,101 +98,53 @@ def compute_all_scores(prediction, fact, fact_embeddings, prediction_embeddings,
         "Cosine Similarity": cosine_sim
     }
 
-# Combined similarity function
-def token_cosine_similarity(text1, text2, model):
-    tokens1 = text1.split()
-    tokens2 = text2.split()
-    token_embeddings1 = np.mean([model.encode(token) for token in tokens1], axis=0)
-    token_embeddings2 = np.mean([model.encode(token) for token in tokens2], axis=0)
-    return util.cos_sim(token_embeddings1, token_embeddings2).item()
-
-def combined_similarity(fact, prediction, model, sentence_weight=0.7, token_weight=0.3):
-    fact_embedding = model.encode(fact, convert_to_tensor=True)
-    prediction_embedding = model.encode(prediction, convert_to_tensor=True)
-    sentence_sim = util.cos_sim(fact_embedding, prediction_embedding).item()
-    
-    token_sim = token_cosine_similarity(fact, prediction, model)
-    
-    return sentence_weight * sentence_sim + token_weight * token_sim
-
-# Fact checker function for Gradio
+# Function to handle fact-checking with multiple PDF documents
 def fact_checker(fact, pdf_files=None):
-    results = []
-    fact_sentences = fact.split('. ')
-    
+    context = ""
     if pdf_files:
         for pdf_file in pdf_files:
             pdf_text_content = extract_text_with_references(pdf_file.name)
-            pdf_results = []
-            
-            for fact_sentence in fact_sentences:
-                context = " ".join([entry["text"] for entry in pdf_text_content])
-                result = qa_model(question=fact_sentence, context=context)
-                answer = result['answer']
-                
-                fact_embeddings = get_embeddings(fact_sentence, embedding_model)
-                predicted_embeddings = get_embeddings(answer, embedding_model)
-                similarity_score = combined_similarity(fact_sentence, answer, embedding_model)
-                
-                verdict = "True" if similarity_score > 0.73 else "False"
-                
-                scores = compute_all_scores(answer, fact_sentence, fact_embeddings, predicted_embeddings, result)
-                references = find_references(fact_sentence, pdf_text_content)
-                
-                pdf_results.append({
-                    "sentence": fact_sentence,
-                    "verdict": verdict,
-                    "exact_match": scores['Exact Match'],
-                    "f1_score": scores['F1 Score'],
-                    "qa_confidence": scores['QA Confidence'],
-                    "cosine_similarity": scores['Cosine Similarity'],
-                    "references": "\n".join(references)
-                })
-            
-            results.append({f"PDF: {pdf_file.name}": pdf_results})
-
+            context += " ".join([entry["text"] for entry in pdf_text_content])  # Combine all sentences as context
     else:
         context = "Psychology knowledge base"
-        result = qa_model(question=fact, context=context)
-        answer = result['answer']
+    
+    # Use the QA model to check the fact against the context
+    result = qa_model(question=fact, context=context)
+    
+    # Extract the answer and similarity score
+    answer = result['answer']
 
-        fact_embeddings = get_embeddings(fact, embedding_model)
-        predicted_embeddings = get_embeddings(answer, embedding_model)
-        similarity_score = combined_similarity(fact, answer, embedding_model)
-        
-        verdict = "True" if similarity_score > 0.73 else "False"
-        scores = compute_all_scores(answer, fact, fact_embeddings, predicted_embeddings, result)
-        
-        results.append({
-            "verdict": verdict,
-            "exact_match": scores['Exact Match'],
-            "f1_score": scores['F1 Score'],
-            "qa_confidence": scores['QA Confidence'],
-            "cosine_similarity": scores['Cosine Similarity'],
-            "references": "Default knowledge base"
-        })
+    # Generate embeddings for the fact and predicted answer
+    fact_embeddings = get_embeddings(fact, embedding_model, tokenizer)
+    predicted_embeddings = get_embeddings(answer, embedding_model, tokenizer)
 
+    similarity_score = cosine_similarity_score(fact_embeddings, predicted_embeddings)
+    
+    # Find specific references from the PDF (page number and quote)
+    references = []
     if pdf_files:
-        first_pdf_result = results[0][f"PDF: {pdf_files[0].name}"][0]
-        return (
-            first_pdf_result["verdict"], 
-            first_pdf_result["exact_match"], 
-            first_pdf_result["f1_score"], 
-            first_pdf_result["qa_confidence"], 
-            first_pdf_result["cosine_similarity"], 
-            first_pdf_result["references"]
-        )
+        for pdf_file in pdf_files:
+            pdf_text_content = extract_text_with_references(pdf_file.name)
+            references.extend(find_references(answer, pdf_text_content))
+        formatted_references = "\n".join(references)
     else:
-        first_result = results[0]
-        return (
-            first_result["verdict"], 
-            first_result["exact_match"], 
-            first_result["f1_score"], 
-            first_result["qa_confidence"], 
-            first_result["cosine_similarity"], 
-            first_result["references"]
-        )
+        formatted_references = "Default knowledge base"
+    
+    # Set a verdict based on a similarity threshold
+    verdict = "True" if similarity_score > 0.73 else "False"
+    
+    # Compute all four scores
+    scores = compute_all_scores(answer, fact, fact_embeddings, predicted_embeddings, result)
 
+    
+    return (
+        verdict,
+        scores['Exact Match'],  # Exact Match Score
+        scores['F1 Score'],     # F1 Score
+        scores['QA Confidence'],# QA Confidence Score
+        scores['Cosine Similarity'],  # Cosine Similarity Score
+        formatted_references    # References
+    )
 
 example_fact_1 = "Ekman’s basic emotions include Anger, Disgust, Fear, Happiness, Sadness and Surprise."
 example_pdf_path_1 = "IdentifyingDepressiononTwitter.pdf"
@@ -274,7 +227,7 @@ with gr.Blocks(css=".submit-button {background-color: orange; color: white; font
         **Cosine Similarity**: measures the semantic similarity between two sets of text. 
         This is also used to determine the verdict of the claim.
 
-
+        
         This model currently uses [distilbert/distilbert-base-uncased-distilled-squad](https://huggingface.co/distilbert/distilbert-base-uncased-distilled-squad) 
         which is a Transformer model trained by distilling BERT base that is especially good at question answering.
         Created by Yiyi He, supervised by A.Prof. Sonny Pham. This project is solely 
